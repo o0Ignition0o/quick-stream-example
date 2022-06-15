@@ -44,6 +44,13 @@ impl Plugin for TestPlugin {
                 if let Ok(Some(true)) = router_response.context.get::<_, bool>("debug") {
                     tracing::info!("debug mode!");
 
+                    // after-response-value has *not* been set yet
+                    assert!(router_response
+                        .context
+                        .get::<_, u8>("after-response-value")
+                        .unwrap()
+                        .is_none());
+
                     // let's play with the headers!
                     let headers = router_response
                         .response
@@ -54,11 +61,24 @@ impl Plugin for TestPlugin {
                         .join(" ");
                     tracing::info!("headers are: {:?}", headers);
 
+                    // we need to clone the context in order to use it in the closure
+                    let context = router_response.context.clone();
+
                     // we can now transform the router_response!
                     router_response
                         .map(|response| {
-                            response.map(|body| {
-                                tracing::info!("got body! {:?}", body);
+                            // we need to clone the context in order to use it in the closure
+                            let context = context.clone();
+                            response.map(move |body| {
+                                // after-response-value is available here!
+                                assert_eq!(
+                                    42,
+                                    context
+                                        .get::<_, u8>("after-response-value")
+                                        .unwrap()
+                                        .unwrap()
+                                );
+                                tracing::info!("got router response body! {:?}", body);
                                 body
                             })
                         })
@@ -82,9 +102,23 @@ impl Plugin for TestPlugin {
     {
         ServiceBuilder::new()
             .service(service)
-            .map_response(|response| {
-                response.context.insert("debug", true).unwrap();
-                response
+            .map_response(|execution_response| {
+                execution_response.context.insert("debug", true).unwrap();
+
+                // we need to clone the context in order to use it in the closure
+                let context = execution_response.context.clone();
+                execution_response
+                    .map(|response| {
+                        // we need to clone the context in order to use it in the closure
+                        let context = context.clone();
+                        response.map(move |body| {
+                            // let's add information through the context
+                            context.insert("after-response-value", 42).unwrap();
+                            tracing::info!("got execution response body! {:?}", body);
+                            body
+                        })
+                    })
+                    .boxed()
             })
             .boxed()
     }
@@ -101,7 +135,7 @@ impl Plugin for TestPlugin {
 
 // This macro allows us to use it in our plugin registry!
 // register_plugin takes a group name, and a plugin name.
-register_plugin!("in_house", "test_plugin", TestPlugin);
+register_plugin!("my_example", "test_plugin", TestPlugin);
 
 #[cfg(test)]
 mod tests {
@@ -117,7 +151,7 @@ mod tests {
         apollo_router::plugins()
             .get("my_example.test_plugin")
             .expect("Plugin not found")
-            .create_instance(&serde_json::json!({"message" : "Starting my plugin"}))
+            .create_instance(&serde_json::json!({"enabled" : true}))
             .await
             .unwrap();
     }
