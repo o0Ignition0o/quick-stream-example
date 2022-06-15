@@ -1,7 +1,7 @@
 use apollo_router::plugin::Plugin;
 use apollo_router::{
-    register_plugin, ExecutionRequest, ExecutionResponse, Response, ResponseBody, RouterRequest,
-    RouterResponse, SubgraphRequest, SubgraphResponse,
+    register_plugin, Context, ExecutionRequest, ExecutionResponse, Response, ResponseBody,
+    RouterRequest, RouterResponse, SubgraphRequest, SubgraphResponse,
 };
 use futures::stream::BoxStream;
 use futures::StreamExt;
@@ -69,18 +69,7 @@ impl Plugin for TestPlugin {
                         .map(|response| {
                             // we need to clone the context in order to use it in the closure
                             let context = context.clone();
-                            response.map(move |body| {
-                                // after-response-value is available here!
-                                assert_eq!(
-                                    42,
-                                    context
-                                        .get::<_, u8>("after-response-value")
-                                        .unwrap()
-                                        .unwrap()
-                                );
-                                tracing::info!("got router response body! {:?}", body);
-                                body
-                            })
+                            response.map(move |body| handle_router_response(body, &context))
                         })
                         .boxed()
                 } else {
@@ -104,19 +93,13 @@ impl Plugin for TestPlugin {
             .service(service)
             .map_response(|execution_response| {
                 execution_response.context.insert("debug", true).unwrap();
-
                 // we need to clone the context in order to use it in the closure
                 let context = execution_response.context.clone();
                 execution_response
                     .map(|response| {
                         // we need to clone the context in order to use it in the closure
                         let context = context.clone();
-                        response.map(move |body| {
-                            // let's add information through the context
-                            context.insert("after-response-value", 42).unwrap();
-                            tracing::info!("got execution response body! {:?}", body);
-                            body
-                        })
+                        response.map(move |body| handle_execution_response(body, &context))
                     })
                     .boxed()
             })
@@ -131,6 +114,26 @@ impl Plugin for TestPlugin {
     ) -> BoxService<SubgraphRequest, SubgraphResponse, BoxError> {
         service
     }
+}
+
+fn handle_router_response(body: ResponseBody, context: &Context) -> ResponseBody {
+    // after-response-value is available here!
+    assert_eq!(
+        42,
+        context
+            .get::<_, u8>("after-response-value")
+            .unwrap()
+            .unwrap()
+    );
+    tracing::info!("got router response body! {:?}", body);
+    body
+}
+
+fn handle_execution_response(body: Response, context: &Context) -> Response {
+    // let's add information through the context
+    context.insert("after-response-value", 42).unwrap();
+    tracing::info!("got execution response body! {:?}", body);
+    body
 }
 
 // This macro allows us to use it in our plugin registry!
