@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use apollo_router::plugin::Plugin;
@@ -7,6 +8,8 @@ use apollo_router::{
 };
 use futures::stream::BoxStream;
 use futures::StreamExt;
+use http::header::HeaderName;
+use http::HeaderValue;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tower::util::BoxService;
@@ -42,26 +45,40 @@ impl Plugin for TestPlugin {
     ) -> BoxService<RouterRequest, RouterResponse<BoxStream<'static, ResponseBody>>, BoxError> {
         ServiceBuilder::new()
             .service(service)
-            .map_response(|router_response| {
+            .map_response(|mut router_response| {
                 if let Ok(Some(true)) = router_response.context.get::<_, bool>("debug") {
                     tracing::info!("debug mode!");
 
-                    // after-response-value has *not* been set yet
+                    // after-first-response-context has *not* been set yet
                     assert!(router_response
                         .context
-                        .get::<_, u8>("after-response-value")
+                        .get::<_, u8>("after-first-response-context")
                         .unwrap()
                         .is_none());
 
-                    // let's play with the headers!
-                    let headers = router_response
-                        .response
-                        .headers()
-                        .iter()
-                        .map(|(key, value)| format!("{}: {:?}", key.to_string(), value))
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    tracing::info!("headers are: {:?}", headers);
+                    // let's get subgraph response times from the context!
+                    let subgraph_response_times = router_response
+                        .context
+                        .get::<_, Vec<(String, Duration)>>("subgraph-response-times")
+                        .expect("couldn't get a value from the context");
+
+                    if let Some(response_times) = subgraph_response_times {
+                        for (subgraph_name, duration) in response_times.iter() {
+                            tracing::info!("subgraph {} replied in {:?}", subgraph_name, duration);
+                            // let's add the subgraph response time in the header:
+                            router_response.response.headers_mut().append(
+                                HeaderName::from_str(
+                                    format!("subgraph-response-time-{}", subgraph_name).as_str(),
+                                )
+                                .expect("couldn't create header name"),
+                                HeaderValue::from_str(format!("{:?}", duration).as_str())
+                                    .expect("couldn't create header value"),
+                            );
+                        }
+                    } else {
+                        // this part is useful for tests, where subgraphs won't run so the key won't be present
+                        tracing::info!("no subgraph response times!");
+                    }
 
                     // we need to clone the context in order to use it in the closure
                     let context = router_response.context.clone();
@@ -155,37 +172,23 @@ impl Plugin for TestPlugin {
 }
 
 fn handle_router_response(body: ResponseBody, context: &Context) -> ResponseBody {
-    // after-response-value is available here!
+    // after-first-response-context is available here!
     assert_eq!(
         42,
         context
-            .get::<_, u8>("after-response-value")
+            .get::<_, u8>("after-first-response-context")
             .unwrap()
             .unwrap()
     );
 
-    // now let's get subgraph response times from the context!
-    let subgraph_response_times = context
-        .get::<_, Vec<(String, Duration)>>("subgraph-response-times")
-        .expect("couldn't get a value from the context");
-
-    if let Some(response_times) = subgraph_response_times {
-        for (subgraph_name, duration) in response_times.iter() {
-            tracing::info!("subgraph {} replied in {:?}", subgraph_name, duration);
-        }
-    } else {
-        // this part is useful for tests, where subgraphs won't run so the key won't be present
-        tracing::warn!("no subgraph response times!");
-    }
-
-    tracing::info!("got router response body! {:?}", body);
+    tracing::info!("got non primary router response body! {:?}", body);
     body
 }
 
 fn handle_execution_response(body: Response, context: &Context) -> Response {
     // let's add information through the context
-    context.insert("after-response-value", 42).unwrap();
-    tracing::info!("got execution response body! {:?}", body);
+    context.insert("after-first-response-context", 42).unwrap();
+    tracing::info!("got non primary execution response body! {:?}", body);
     body
 }
 
