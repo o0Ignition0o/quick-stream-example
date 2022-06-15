@@ -1,7 +1,9 @@
+use std::time::{Duration, Instant};
+
 use apollo_router::plugin::Plugin;
 use apollo_router::{
     register_plugin, Context, ExecutionRequest, ExecutionResponse, Response, ResponseBody,
-    RouterRequest, RouterResponse, SubgraphRequest, SubgraphResponse,
+    RouterRequest, RouterResponse, ServiceBuilderExt, SubgraphRequest, SubgraphResponse,
 };
 use futures::stream::BoxStream;
 use futures::StreamExt;
@@ -109,10 +111,46 @@ impl Plugin for TestPlugin {
     // Delete this function if you are not customizing it.
     fn subgraph_service(
         &mut self,
-        _name: &str,
+        service_name: &str,
         service: BoxService<SubgraphRequest, SubgraphResponse, BoxError>,
     ) -> BoxService<SubgraphRequest, SubgraphResponse, BoxError> {
-        service
+        // let's keep the service_name around, so we can use it in the map_future_with_context closure
+        let service_name = service_name.to_string();
+        ServiceBuilder::new()
+            // we're going to use map_future_with_context here so we can start a timer,
+            // and insert the elapsed duration in the context once the subgraph call is done
+            .map_future_with_context(
+                move |req: &SubgraphRequest| req.context.clone(),
+                move |ctx: Context, fut| {
+                    // start a timer
+                    let start = Instant::now();
+
+                    // we're cloning service name so we can use it in the async closure
+                    let service_name = service_name.clone();
+                    async move {
+                        // run the subgraph request
+                        let result: Result<SubgraphResponse, BoxError> = fut.await;
+                        // get the duration
+                        let duration = start.elapsed();
+                        // add this timer to subgraph-response-times.
+                        // we want to push the subgraph response time to an array
+                        // we will use context.upsert to do that
+                        ctx.upsert(
+                            "subgraph-response-times",
+                            |mut response_times: Vec<(String, Duration)>| {
+                                response_times.push((service_name.clone(), duration));
+                                tracing::info!("pushed response time!");
+                                response_times
+                            },
+                        )
+                        .expect("couldn't put subgraph response time to the context");
+                        // finally we can return the future result
+                        result
+                    }
+                },
+            )
+            .service(service)
+            .boxed()
     }
 }
 
@@ -125,6 +163,21 @@ fn handle_router_response(body: ResponseBody, context: &Context) -> ResponseBody
             .unwrap()
             .unwrap()
     );
+
+    // now let's get subgraph response times from the context!
+    let subgraph_response_times = context
+        .get::<_, Vec<(String, Duration)>>("subgraph-response-times")
+        .expect("couldn't get a value from the context");
+
+    if let Some(response_times) = subgraph_response_times {
+        for (subgraph_name, duration) in response_times.iter() {
+            tracing::info!("subgraph {} replied in {:?}", subgraph_name, duration);
+        }
+    } else {
+        // this part is useful for tests, where subgraphs won't run so the key won't be present
+        tracing::warn!("no subgraph response times!");
+    }
+
     tracing::info!("got router response body! {:?}", body);
     body
 }
