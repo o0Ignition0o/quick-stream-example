@@ -71,7 +71,7 @@ dependencies = [
 [[package]]
 name = "apollo-router"
 version = "0.9.4"
-source = "git+https://github.com/apollographql/router.git?tag=v0.9.4#0387f9b5a3c9df4aa4473cad9a7352bb042c189d"
+source = "git+https://github.com/apollographql/router.git?branch=geal/await-the-primary-response#3a63936764d00a68e7e2fc86ebae18cc79ca6084"
 dependencies = [
  "anyhow",
  "apollo-parser",
@@ -173,7 +173,7 @@ dependencies = [
 [[package]]
 name = "apollo-spaceport"
 version = "0.9.4"
-source = "git+https://github.com/apollographql/router.git?tag=v0.9.4#0387f9b5a3c9df4aa4473cad9a7352bb042c189d"
+source = "git+https://github.com/apollographql/router.git?branch=geal/await-the-primary-response#3a63936764d00a68e7e2fc86ebae18cc79ca6084"
 dependencies = [
  "bytes",
  "clap 3.1.18",
@@ -195,7 +195,7 @@ dependencies = [
 [[package]]
 name = "apollo-uplink"
 version = "0.9.4"
-source = "git+https://github.com/apollographql/router.git?tag=v0.9.4#0387f9b5a3c9df4aa4473cad9a7352bb042c189d"
+source = "git+https://github.com/apollographql/router.git?branch=geal/await-the-primary-response#3a63936764d00a68e7e2fc86ebae18cc79ca6084"
 dependencies = [
  "futures",
  "graphql_client",
@@ -2518,6 +2518,7 @@ dependencies = [
  "async-trait",
  "clap 3.1.18",
  "futures",
+ "http",
  "schemars",
  "serde",
  "serde_json",
