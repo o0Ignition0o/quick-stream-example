@@ -1,13 +1,17 @@
+use apollo_router::error::{CacheResolverError, QueryPlannerError, SpecError};
 use apollo_router::graphql::Response;
+use apollo_router::layers::ServiceExt;
 use apollo_router::plugin::Plugin;
-use apollo_router::register_plugin;
-use apollo_router::services::{RouterRequest, RouterResponse, SubgraphRequest, SubgraphResponse};
+use apollo_router::services::{
+    QueryPlannerRequest, QueryPlannerResponse, RouterRequest, RouterResponse,
+};
+use apollo_router::{register_plugin, Context};
 use futures::stream::BoxStream;
 use http::StatusCode;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tower::util::BoxService;
-use tower::{BoxError, ServiceBuilder, ServiceExt};
+use tower::{BoxError, ServiceBuilder, ServiceExt as _};
 
 #[derive(Debug)]
 struct TestPlugin {
@@ -35,7 +39,7 @@ impl Plugin for TestPlugin {
         ServiceBuilder::new()
             .service(service)
             .map_response(|mut router_response| {
-                // let's see if a subgraph service has set a response status
+                // let's see if we need to set a custom response status
                 if let Ok(Some(status_code_to_set)) = router_response.context.get("set_status_code")
                 {
                     // let's set the response status
@@ -48,28 +52,56 @@ impl Plugin for TestPlugin {
             .boxed()
     }
 
-    fn subgraph_service(
+    /// This service handles generating the query plan for each incoming request.
+    /// Define `query_planning_service` if your customization needs to interact with query planning functionality (for example, to log query plan details).
+    fn query_planning_service(
         &self,
-        _service_name: &str,
-        service: BoxService<SubgraphRequest, SubgraphResponse, BoxError>,
-    ) -> BoxService<SubgraphRequest, SubgraphResponse, BoxError> {
+        service: BoxService<QueryPlannerRequest, QueryPlannerResponse, BoxError>,
+    ) -> BoxService<QueryPlannerRequest, QueryPlannerResponse, BoxError> {
         ServiceBuilder::new()
             .service(service)
-            // we're going to use map_future_with_context here so we can start a timer,
-            // and insert the elapsed duration in the context once the subgraph call is done
-            .map_response(|res: SubgraphResponse| {
-                // we have a subgraphresponse here, we could have a look at the status code for example:
+            .map_future_with_context(
+                move |req: &QueryPlannerRequest| req.context.clone(),
+                |ctx: Context, query_planner_future| async move {
+                    // let's run the query planner
+                    let query_planner_response: Result<QueryPlannerResponse, BoxError> =
+                        query_planner_future.await;
 
-                if res.response.status() == 200 {
-                    // Sneaky attempt to turn http 200 into http 401
-                    // we do this by using the context
-                    // to show our intent to change the status code,
-                    // which the router service will pick up later on
-                    let _ = res.context.insert("set_status_code", 401u16); // TODO: handle insertion error maybe?
-                }
-
-                res
-            })
+                    match &query_planner_response {
+                        Err(error) => {
+                            // Ok this one is a bit tricky, but bear with me:
+                            //
+                            // The error here is a BoxError, we will try to downcast it into the error we are looking for...
+                            match error.downcast_ref() {
+                                Some(CacheResolverError::RetrievalError(error)) => {
+                                    match error.as_ref() {
+                                        // We're dealing with an invalid type error
+                                        QueryPlannerError::SpecError(SpecError::InvalidType(
+                                            message,
+                                        )) => {
+                                            // We could even check if the message is about a specific type,
+                                            // but the example is big enough already.
+                                            tracing::info!("got an invalid type error: {message}");
+                                            // let's use the context to declare our intention to turn the graphql response into a 401
+                                            // TODO: handle failed insert?
+                                            let _ = ctx.insert("set_status_code", 401u16);
+                                        }
+                                        _ => {
+                                            // this is not the error we are looking for
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    // This is not a query planner error
+                                }
+                            }
+                        }
+                        // the success variant isn't interesting to us.
+                        _ => {}
+                    };
+                    query_planner_response
+                },
+            )
             .boxed()
     }
 }
@@ -83,6 +115,7 @@ mod tests {
     use super::{Conf, TestPlugin};
     use apollo_router::plugin::test::IntoSchema::Canned;
     use apollo_router::plugin::{plugins, test::PluginTestHarness, Plugin};
+    use apollo_router::services::RouterRequest;
     use http::StatusCode;
     use tower::BoxError;
 
@@ -111,15 +144,25 @@ mod tests {
             .build()
             .await?;
 
-        // Send a request
-        let mut result = test_harness.call_canned().await?;
+        // Send a valid request
+        let valid_request = RouterRequest::fake_builder()
+            .query("query Me {\n  me {\n    name\n  }\n}")
+            .build()?;
+        let mut result = test_harness.call(valid_request).await?;
 
-        assert_eq!(StatusCode::UNAUTHORIZED, result.response.status());
+        assert_eq!(StatusCode::OK, result.response.status());
 
         assert!(result.next_response().await.is_some());
-
         // You could keep calling result.next_response() until it yields None if you're expexting more parts.
         assert!(result.next_response().await.is_none());
+
+        // Send an invalid request
+        let invalid_request = RouterRequest::fake_builder()
+            .query("query Me {\n  me {\n    name\n thisfielddoesntexist\n }\n}")
+            .build()?;
+        let result = test_harness.call(invalid_request).await?;
+
+        assert_eq!(StatusCode::UNAUTHORIZED, result.response.status());
         Ok(())
     }
 }
