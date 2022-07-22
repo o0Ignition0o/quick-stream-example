@@ -1,16 +1,17 @@
-use std::time::{Duration, Instant};
-
+use apollo_router::error::{CacheResolverError, QueryPlannerError, SpecError};
+use apollo_router::graphql::Response;
+use apollo_router::layers::ServiceExt;
 use apollo_router::plugin::Plugin;
-use apollo_router::{
-    register_plugin, Context, ExecutionRequest, ExecutionResponse, Response, ResponseBody,
-    RouterRequest, RouterResponse, ServiceBuilderExt, SubgraphRequest, SubgraphResponse,
+use apollo_router::services::{
+    QueryPlannerRequest, QueryPlannerResponse, RouterRequest, RouterResponse,
 };
+use apollo_router::{register_plugin, Context};
 use futures::stream::BoxStream;
-use futures::StreamExt;
+use http::StatusCode;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tower::util::BoxService;
-use tower::{BoxError, ServiceBuilder, ServiceExt};
+use tower::{BoxError, ServiceBuilder, ServiceExt as _};
 
 #[derive(Debug)]
 struct TestPlugin {
@@ -31,162 +32,78 @@ impl Plugin for TestPlugin {
         Ok(TestPlugin { configuration })
     }
 
-    // Delete this function if you are not customizing it.
     fn router_service(
-        &mut self,
-        service: BoxService<
-            RouterRequest,
-            RouterResponse<BoxStream<'static, ResponseBody>>,
-            BoxError,
-        >,
-    ) -> BoxService<RouterRequest, RouterResponse<BoxStream<'static, ResponseBody>>, BoxError> {
+        &self,
+        service: BoxService<RouterRequest, RouterResponse<BoxStream<'static, Response>>, BoxError>,
+    ) -> BoxService<RouterRequest, RouterResponse<BoxStream<'static, Response>>, BoxError> {
         ServiceBuilder::new()
             .service(service)
-            .map_response(|router_response| {
-                if let Ok(Some(true)) = router_response.context.get::<_, bool>("debug") {
-                    tracing::info!("debug mode!");
-
-                    // after-response-value has *not* been set yet
-                    assert!(router_response
-                        .context
-                        .get::<_, u8>("after-response-value")
-                        .unwrap()
-                        .is_none());
-
-                    // let's play with the headers!
-                    let headers = router_response
-                        .response
-                        .headers()
-                        .iter()
-                        .map(|(key, value)| format!("{}: {:?}", key.to_string(), value))
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    tracing::info!("headers are: {:?}", headers);
-
-                    // we need to clone the context in order to use it in the closure
-                    let context = router_response.context.clone();
-
-                    // we can now transform the router_response!
-                    router_response
-                        .map(|response| {
-                            // we need to clone the context in order to use it in the closure
-                            let context = context.clone();
-                            response.map(move |body| handle_router_response(body, &context))
-                        })
-                        .boxed()
-                } else {
-                    router_response.boxed()
+            .map_response(|mut router_response| {
+                // let's see if we need to set a custom response status
+                if let Ok(Some(status_code_to_set)) = router_response.context.get("set_status_code")
+                {
+                    // let's set the response status
+                    let response_status = router_response.response.status_mut();
+                    *response_status =
+                        StatusCode::from_u16(status_code_to_set).unwrap_or_else(|_| StatusCode::OK);
                 }
+                router_response
             })
             .boxed()
     }
 
-    // Delete this function if you are not customizing it.
-    fn execution_service(
-        &mut self,
-        service: BoxService<
-            ExecutionRequest,
-            ExecutionResponse<BoxStream<'static, Response>>,
-            BoxError,
-        >,
-    ) -> BoxService<ExecutionRequest, ExecutionResponse<BoxStream<'static, Response>>, BoxError>
-    {
+    /// This service handles generating the query plan for each incoming request.
+    /// Define `query_planning_service` if your customization needs to interact with query planning functionality (for example, to log query plan details).
+    fn query_planning_service(
+        &self,
+        service: BoxService<QueryPlannerRequest, QueryPlannerResponse, BoxError>,
+    ) -> BoxService<QueryPlannerRequest, QueryPlannerResponse, BoxError> {
         ServiceBuilder::new()
             .service(service)
-            .map_response(|execution_response| {
-                execution_response.context.insert("debug", true).unwrap();
-                // we need to clone the context in order to use it in the closure
-                let context = execution_response.context.clone();
-                execution_response
-                    .map(|response| {
-                        // we need to clone the context in order to use it in the closure
-                        let context = context.clone();
-                        response.map(move |body| handle_execution_response(body, &context))
-                    })
-                    .boxed()
-            })
-            .boxed()
-    }
-
-    // Delete this function if you are not customizing it.
-    fn subgraph_service(
-        &mut self,
-        service_name: &str,
-        service: BoxService<SubgraphRequest, SubgraphResponse, BoxError>,
-    ) -> BoxService<SubgraphRequest, SubgraphResponse, BoxError> {
-        // let's keep the service_name around, so we can use it in the map_future_with_context closure
-        let service_name = service_name.to_string();
-        ServiceBuilder::new()
-            // we're going to use map_future_with_context here so we can start a timer,
-            // and insert the elapsed duration in the context once the subgraph call is done
             .map_future_with_context(
-                move |req: &SubgraphRequest| req.context.clone(),
-                move |ctx: Context, fut| {
-                    // start a timer
-                    let start = Instant::now();
+                move |req: &QueryPlannerRequest| req.context.clone(),
+                |ctx: Context, query_planner_future| async move {
+                    // let's run the query planner
+                    let query_planner_response: Result<QueryPlannerResponse, BoxError> =
+                        query_planner_future.await;
 
-                    // we're cloning service name so we can use it in the async closure
-                    let service_name = service_name.clone();
-                    async move {
-                        // run the subgraph request
-                        let result: Result<SubgraphResponse, BoxError> = fut.await;
-                        // get the duration
-                        let duration = start.elapsed();
-                        // add this timer to subgraph-response-times.
-                        // we want to push the subgraph response time to an array
-                        // we will use context.upsert to do that
-                        ctx.upsert(
-                            "subgraph-response-times",
-                            |mut response_times: Vec<(String, Duration)>| {
-                                response_times.push((service_name.clone(), duration));
-                                tracing::info!("pushed response time!");
-                                response_times
-                            },
-                        )
-                        .expect("couldn't put subgraph response time to the context");
-                        // finally we can return the future result
-                        result
-                    }
+                    match &query_planner_response {
+                        Err(error) => {
+                            // Ok this one is a bit tricky, but bear with me:
+                            //
+                            // The error here is a BoxError, we will try to downcast it into the error we are looking for...
+                            match error.downcast_ref() {
+                                Some(CacheResolverError::RetrievalError(error)) => {
+                                    match error.as_ref() {
+                                        // We're dealing with an invalid type error
+                                        QueryPlannerError::SpecError(SpecError::InvalidType(
+                                            message,
+                                        )) => {
+                                            // We could even check if the message is about a specific type,
+                                            // but the example is big enough already.
+                                            tracing::info!("got an invalid type error: {message}");
+                                            // let's use the context to declare our intention to turn the graphql response into a 401
+                                            // TODO: handle failed insert?
+                                            let _ = ctx.insert("set_status_code", 401u16);
+                                        }
+                                        _ => {
+                                            // this is not the error we are looking for
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    // This is not a query planner error
+                                }
+                            }
+                        }
+                        // the success variant isn't interesting to us.
+                        _ => {}
+                    };
+                    query_planner_response
                 },
             )
-            .service(service)
             .boxed()
     }
-}
-
-fn handle_router_response(body: ResponseBody, context: &Context) -> ResponseBody {
-    // after-response-value is available here!
-    assert_eq!(
-        42,
-        context
-            .get::<_, u8>("after-response-value")
-            .unwrap()
-            .unwrap()
-    );
-
-    // now let's get subgraph response times from the context!
-    let subgraph_response_times = context
-        .get::<_, Vec<(String, Duration)>>("subgraph-response-times")
-        .expect("couldn't get a value from the context");
-
-    if let Some(response_times) = subgraph_response_times {
-        for (subgraph_name, duration) in response_times.iter() {
-            tracing::info!("subgraph {} replied in {:?}", subgraph_name, duration);
-        }
-    } else {
-        // this part is useful for tests, where subgraphs won't run so the key won't be present
-        tracing::warn!("no subgraph response times!");
-    }
-
-    tracing::info!("got router response body! {:?}", body);
-    body
-}
-
-fn handle_execution_response(body: Response, context: &Context) -> Response {
-    // let's add information through the context
-    context.insert("after-response-value", 42).unwrap();
-    tracing::info!("got execution response body! {:?}", body);
-    body
 }
 
 // This macro allows us to use it in our plugin registry!
@@ -196,15 +113,15 @@ register_plugin!("my_example", "test_plugin", TestPlugin);
 #[cfg(test)]
 mod tests {
     use super::{Conf, TestPlugin};
-
-    use apollo_router::utils::test::IntoSchema::Canned;
-    use apollo_router::utils::test::PluginTestHarness;
-    use apollo_router::{Plugin, ResponseBody};
+    use apollo_router::plugin::test::IntoSchema::Canned;
+    use apollo_router::plugin::{plugins, test::PluginTestHarness, Plugin};
+    use apollo_router::services::RouterRequest;
+    use http::StatusCode;
     use tower::BoxError;
 
     #[tokio::test]
     async fn plugin_registered() {
-        apollo_router::plugins()
+        plugins()
             .get("my_example.test_plugin")
             .expect("Plugin not found")
             .create_instance(&serde_json::json!({"enabled" : true}))
@@ -227,22 +144,25 @@ mod tests {
             .build()
             .await?;
 
-        // Send a request
-        let mut result = test_harness.call_canned().await?;
+        // Send a valid request
+        let valid_request = RouterRequest::fake_builder()
+            .query("query Me {\n  me {\n    name\n  }\n}")
+            .build()?;
+        let mut result = test_harness.call(valid_request).await?;
 
-        let first_response = result
-            .next_response()
-            .await
-            .expect("couldn't get primary response");
+        assert_eq!(StatusCode::OK, result.response.status());
 
-        if let ResponseBody::GraphQL(graphql) = first_response {
-            assert!(graphql.data.is_some());
-        } else {
-            panic!("expected graphql response")
-        }
-
+        assert!(result.next_response().await.is_some());
         // You could keep calling result.next_response() until it yields None if you're expexting more parts.
         assert!(result.next_response().await.is_none());
+
+        // Send an invalid request
+        let invalid_request = RouterRequest::fake_builder()
+            .query("query Me {\n  me {\n    name\n thisfielddoesntexist\n }\n}")
+            .build()?;
+        let result = test_harness.call(invalid_request).await?;
+
+        assert_eq!(StatusCode::UNAUTHORIZED, result.response.status());
         Ok(())
     }
 }
