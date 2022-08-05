@@ -1,12 +1,10 @@
 use apollo_router::error::{CacheResolverError, QueryPlannerError, SpecError};
-use apollo_router::graphql::Response;
 use apollo_router::layers::ServiceExt;
-use apollo_router::plugin::Plugin;
+use apollo_router::plugin::{Plugin, PluginInit};
 use apollo_router::services::{
     QueryPlannerRequest, QueryPlannerResponse, RouterRequest, RouterResponse,
 };
 use apollo_router::{register_plugin, Context};
-use futures::stream::BoxStream;
 use http::StatusCode;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -27,15 +25,17 @@ struct Conf {
 impl Plugin for TestPlugin {
     type Config = Conf;
 
-    async fn new(configuration: Self::Config) -> Result<Self, BoxError> {
-        tracing::info!("{}", configuration.enabled);
-        Ok(TestPlugin { configuration })
+    async fn new(init: PluginInit<Self::Config>) -> Result<Self, BoxError> {
+        tracing::info!("{}", init.config.enabled);
+        Ok(TestPlugin {
+            configuration: init.config,
+        })
     }
 
     fn router_service(
         &self,
-        service: BoxService<RouterRequest, RouterResponse<BoxStream<'static, Response>>, BoxError>,
-    ) -> BoxService<RouterRequest, RouterResponse<BoxStream<'static, Response>>, BoxError> {
+        service: BoxService<RouterRequest, RouterResponse, BoxError>,
+    ) -> BoxService<RouterRequest, RouterResponse, BoxError> {
         ServiceBuilder::new()
             .service(service)
             .map_response(|mut router_response| {
@@ -114,6 +114,7 @@ register_plugin!("my_example", "test_plugin", TestPlugin);
 mod tests {
     use super::{Conf, TestPlugin};
     use apollo_router::plugin::test::IntoSchema::Canned;
+    use apollo_router::plugin::PluginInit;
     use apollo_router::plugin::{plugins, test::PluginTestHarness, Plugin};
     use apollo_router::services::RouterRequest;
     use http::StatusCode;
@@ -124,7 +125,7 @@ mod tests {
         plugins()
             .get("my_example.test_plugin")
             .expect("Plugin not found")
-            .create_instance(&serde_json::json!({"enabled" : true}))
+            .create_instance(&serde_json::json!({"enabled" : true}), "")
             .await
             .unwrap();
     }
@@ -135,7 +136,9 @@ mod tests {
         let conf = Conf { enabled: true };
 
         // Build an instance of our plugin to use in the test harness
-        let plugin = TestPlugin::new(conf).await.expect("created plugin");
+        let plugin = TestPlugin::new(PluginInit::new(conf, ""))
+            .await
+            .expect("created plugin");
 
         // Create the test harness. You can add mocks for individual services, or use prebuilt canned services.
         let mut test_harness = PluginTestHarness::builder()
