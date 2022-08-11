@@ -1,0 +1,6 @@
+version: "3.9"
+services:
+  rust:
+    build: rust_and_node
+    volumes: 
+      - .:/tmp

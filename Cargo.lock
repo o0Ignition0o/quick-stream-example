@@ -97,8 +97,8 @@ dependencies = [
 
 [[package]]
 name = "apollo-router"
-version = "0.14.0"
-source = "git+https://github.com/apollographql/router.git?tag=v0.14.0#9c0864ca1f52bfa9369b0da55993258c0508b388"
+version = "0.15.1"
+source = "git+https://github.com/apollographql/router.git?tag=v0.15.1#ac7607b0b96e0193631015226b2fdc14c7a9515d"
 dependencies = [
  "access-json",
  "anyhow",
@@ -188,8 +188,8 @@ dependencies = [
 
 [[package]]
 name = "apollo-spaceport"
-version = "0.14.0"
-source = "git+https://github.com/apollographql/router.git?tag=v0.14.0#9c0864ca1f52bfa9369b0da55993258c0508b388"
+version = "0.15.1"
+source = "git+https://github.com/apollographql/router.git?tag=v0.15.1#ac7607b0b96e0193631015226b2fdc14c7a9515d"
 dependencies = [
  "bytes",
  "clap",
@@ -210,8 +210,8 @@ dependencies = [
 
 [[package]]
 name = "apollo-uplink"
-version = "0.14.0"
-source = "git+https://github.com/apollographql/router.git?tag=v0.14.0#9c0864ca1f52bfa9369b0da55993258c0508b388"
+version = "0.15.1"
+source = "git+https://github.com/apollographql/router.git?tag=v0.15.1#ac7607b0b96e0193631015226b2fdc14c7a9515d"
 dependencies = [
  "futures",
  "graphql_client",
@@ -2761,7 +2761,7 @@ dependencies = [
 [[package]]
 name = "router-bridge"
 version = "0.1.0"
-source = "git+https://github.com/apollographql/federation-rs.git?branch=geal/defer#4cdcd574a967fc0fe61e0f6d6db92035ed395f0a"
+source = "git+https://github.com/apollographql/federation-rs.git?tag=defer-alpha1#72f1fff5e57a80b4ed4fcbf13ef2ac33b0314b80"
 dependencies = [
  "anyhow",
  "async-channel",
