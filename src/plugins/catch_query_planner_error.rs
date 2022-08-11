@@ -12,7 +12,7 @@ use tower::util::BoxService;
 use tower::{BoxError, ServiceBuilder, ServiceExt as _};
 
 #[derive(Debug)]
-struct TestPlugin {
+struct CatchQueryPlannerError {
     #[allow(dead_code)]
     configuration: Conf,
 }
@@ -22,12 +22,12 @@ struct Conf {
     enabled: bool,
 }
 #[async_trait::async_trait]
-impl Plugin for TestPlugin {
+impl Plugin for CatchQueryPlannerError {
     type Config = Conf;
 
     async fn new(init: PluginInit<Self::Config>) -> Result<Self, BoxError> {
         tracing::info!("{}", init.config.enabled);
-        Ok(TestPlugin {
+        Ok(CatchQueryPlannerError {
             configuration: init.config,
         })
     }
@@ -108,13 +108,17 @@ impl Plugin for TestPlugin {
 
 // This macro allows us to use it in our plugin registry!
 // register_plugin takes a group name, and a plugin name.
-register_plugin!("my_example", "test_plugin", TestPlugin);
+register_plugin!(
+    "my_example",
+    "catch_query_planner_error",
+    CatchQueryPlannerError
+);
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
-    use super::{Conf, TestPlugin};
+    use super::{CatchQueryPlannerError, Conf};
     use apollo_router::plugin::test::IntoSchema::Canned;
     use apollo_router::plugin::PluginInit;
     use apollo_router::plugin::{plugins, test::PluginTestHarness, Plugin};
@@ -125,7 +129,7 @@ mod tests {
     #[tokio::test]
     async fn plugin_registered() {
         plugins()
-            .get("my_example.test_plugin")
+            .get("my_example.catch_query_planner_error")
             .expect("Plugin not found")
             .create_instance(
                 &serde_json::json!({"enabled" : true}),
@@ -141,7 +145,7 @@ mod tests {
         let conf = Conf { enabled: true };
 
         // Build an instance of our plugin to use in the test harness
-        let plugin = TestPlugin::new(PluginInit::new(conf, Arc::new("".to_string())))
+        let plugin = CatchQueryPlannerError::new(PluginInit::new(conf, Arc::new("".to_string())))
             .await
             .expect("created plugin");
 

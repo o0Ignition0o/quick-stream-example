@@ -1,3 +1,7 @@
 plugins:
-  my_example.test_plugin:
+  my_example.catch_query_planner_error:
+    enabled: true
+  my_example.change_status_code:
+    enabled: true
+  my_example.response_stream_context_propagation:
     enabled: true
