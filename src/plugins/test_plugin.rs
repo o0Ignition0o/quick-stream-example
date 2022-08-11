@@ -112,6 +112,8 @@ register_plugin!("my_example", "test_plugin", TestPlugin);
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::{Conf, TestPlugin};
     use apollo_router::plugin::test::IntoSchema::Canned;
     use apollo_router::plugin::PluginInit;
@@ -125,7 +127,10 @@ mod tests {
         plugins()
             .get("my_example.test_plugin")
             .expect("Plugin not found")
-            .create_instance(&serde_json::json!({"enabled" : true}), "")
+            .create_instance(
+                &serde_json::json!({"enabled" : true}),
+                Arc::new("".to_string()),
+            )
             .await
             .unwrap();
     }
@@ -136,7 +141,7 @@ mod tests {
         let conf = Conf { enabled: true };
 
         // Build an instance of our plugin to use in the test harness
-        let plugin = TestPlugin::new(PluginInit::new(conf, ""))
+        let plugin = TestPlugin::new(PluginInit::new(conf, Arc::new("".to_string())))
             .await
             .expect("created plugin");
 
