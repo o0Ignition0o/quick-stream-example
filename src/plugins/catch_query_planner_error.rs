@@ -57,43 +57,32 @@ impl Plugin for CatchQueryPlannerError {
             .service(service)
             .map_future_with_context(
                 move |req: &query_planner::Request| req.context.clone(),
-                |ctx: Context, query_planner_future| async move {
+                |_ctx: Context, query_planner_future| async move {
                     // let's run the query planner
                     let query_planner_response: Result<query_planner::Response, BoxError> =
                         query_planner_future.await;
 
-                    match &query_planner_response {
-                        Err(error) => {
-                            // Ok this one is a bit tricky, but bear with me:
-                            //
-                            // The error here is a BoxError, we will try to downcast it into the error we are looking for...
-                            match error.downcast_ref() {
-                                Some(CacheResolverError::RetrievalError(error)) => {
-                                    match error.as_ref() {
-                                        // We're dealing with an invalid type error
-                                        QueryPlannerError::SpecError(SpecError::InvalidType(
-                                            message,
-                                        )) => {
-                                            // We could even check if the message is about a specific type,
-                                            // but the example is big enough already.
-                                            tracing::info!("got an invalid type error: {message}");
-                                            // let's use the context to declare our intention to turn the graphql response into a 401
-                                            // TODO: handle failed insert?
-                                            let _ = ctx.insert("set_status_code", 401u16);
-                                        }
-                                        _ => {
-                                            // this is not the error we are looking for
-                                        }
-                                    }
-                                }
-                                _ => {
-                                    // This is not a query planner error
-                                }
-                            }
-                        }
-                        // the success variant isn't interesting to us.
-                        _ => {}
-                    };
+                    // TODO: wait until the query planner refacto lands, and update the example
+
+                    // if let Err(error) = &query_planner_response {
+                    //     // Ok this one is a bit tricky, but bear with me:
+                    //     //
+                    //     // The error here is a BoxError, we will try to downcast it into the error we are looking for...
+                    //     if let Some(CacheResolverError::RetrievalError(error)) =
+                    //         error.downcast_ref()
+                    //     {
+                    //         if let QueryPlannerError::SpecError(SpecError::InvalidType(message)) =
+                    //             error.as_ref()
+                    //         {
+                    //             // We could even check if the message is about a specific type,
+                    //             // but the example is big enough already.
+                    //             tracing::info!("got an invalid type error: {message}");
+                    //             // let's use the context to declare our intention to turn the graphql response into a 401
+                    //             // TODO: handle failed insert?
+                    //             let _ = ctx.insert("set_status_code", 401u16);
+                    //         }
+                    //     }
+                    // }
                     query_planner_response
                 },
             )
@@ -111,51 +100,56 @@ register_plugin!(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use super::{CatchQueryPlannerError, Conf};
-    use apollo_router::plugin::test::IntoSchema::Canned;
-    use apollo_router::plugin::PluginInit;
-    use apollo_router::plugin::{plugins, test::PluginTestHarness, Plugin};
-    use apollo_router::services::RouterRequest;
+    use apollo_router::stages::router;
     use http::StatusCode;
-    use tower::BoxError;
+    use tower::Service;
 
     #[tokio::test]
     async fn plugin_registered() {
-        plugins()
-            .get("my_example.catch_query_planner_error")
-            .expect("Plugin not found")
-            .create_instance(
-                &serde_json::json!({"enabled" : true}),
-                Arc::new("".to_string()),
-            )
+        let config = serde_json::json!({
+            "plugins": {
+                "my_example.catch_query_planner_error": {
+                    "enabled": true ,
+                }
+            }
+        });
+        apollo_router::TestHarness::builder()
+            .configuration_json(config)
+            .unwrap()
+            .build()
             .await
             .unwrap();
     }
 
     #[tokio::test]
-    async fn basic_test() -> Result<(), BoxError> {
+    async fn basic_test() {
         // Define a configuration to use with our plugin
-        let conf = Conf { enabled: true };
+        let config = serde_json::json!({
+            "plugins": {
+                "my_example.catch_query_planner_error": {
+                    "enabled": true ,
+                }
+            }
+        });
 
-        // Build an instance of our plugin to use in the test harness
-        let plugin = CatchQueryPlannerError::new(PluginInit::new(conf, Arc::new("".to_string())))
-            .await
-            .expect("created plugin");
-
-        // Create the test harness. You can add mocks for individual services, or use prebuilt canned services.
-        let mut test_harness = PluginTestHarness::builder()
-            .plugin(plugin)
-            .schema(Canned)
+        // Spin up a test harness with the plugin enabled
+        let test_harness = apollo_router::TestHarness::builder()
+            .configuration_json(config)
+            .unwrap()
             .build()
-            .await?;
+            .await
+            .unwrap();
 
         // Send a valid request
-        let valid_request = RouterRequest::fake_builder()
+        let valid_request = router::Request::fake_builder()
             .query("query Me {\n  me {\n    name\n  }\n}")
-            .build()?;
-        let mut result = test_harness.call(valid_request).await?;
+            .build()
+            .expect("couldn't craft request");
+
+        let mut result = test_harness
+            .call(valid_request)
+            .await
+            .expect("service call failed");
 
         assert_eq!(StatusCode::OK, result.response.status());
 
@@ -164,12 +158,16 @@ mod tests {
         assert!(result.next_response().await.is_none());
 
         // Send an invalid request
-        let invalid_request = RouterRequest::fake_builder()
+        let invalid_request = router::Request::fake_builder()
             .query("query Me {\n  me {\n    name\n thisfielddoesntexist\n }\n}")
-            .build()?;
-        let result = test_harness.call(invalid_request).await?;
+            .build()
+            .expect("couldn't craft request");
+
+        let result = test_harness
+            .call(invalid_request)
+            .await
+            .expect("service call failed");
 
         assert_eq!(StatusCode::UNAUTHORIZED, result.response.status());
-        Ok(())
     }
 }
