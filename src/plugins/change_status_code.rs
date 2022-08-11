@@ -118,7 +118,7 @@ mod tests {
             .unwrap();
 
         // Send a request
-        let request = router::Request::fake_builder()
+        let request = router::Request::canned_builder()
             .build()
             .expect("couldn't craft request");
 
