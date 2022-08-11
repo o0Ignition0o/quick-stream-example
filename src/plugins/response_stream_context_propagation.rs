@@ -1,14 +1,8 @@
 use apollo_router::graphql::Response;
 use apollo_router::layers::ServiceBuilderExt;
 use apollo_router::plugin::{Plugin, PluginInit};
-use apollo_router::{
-    register_plugin,
-    services::{
-        ExecutionRequest, ExecutionResponse, RouterRequest, RouterResponse, SubgraphRequest,
-        SubgraphResponse,
-    },
-    Context,
-};
+use apollo_router::stages::*;
+use apollo_router::{register_plugin, Context};
 use futures::StreamExt;
 use http::header::HeaderName;
 use http::HeaderValue;
@@ -16,7 +10,6 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
-use tower::util::BoxService;
 use tower::{BoxError, ServiceBuilder, ServiceExt};
 
 #[derive(Debug)]
@@ -41,10 +34,7 @@ impl Plugin for ResponseStreamContextPropagation {
     }
 
     // Delete this function if you are not customizing it.
-    fn router_service(
-        &self,
-        service: BoxService<RouterRequest, RouterResponse, BoxError>,
-    ) -> BoxService<RouterRequest, RouterResponse, BoxError> {
+    fn router_service(&self, service: router::BoxService) -> router::BoxService {
         ServiceBuilder::new()
             .service(service)
             .map_response(|mut router_response| {
@@ -99,10 +89,7 @@ impl Plugin for ResponseStreamContextPropagation {
     }
 
     // Delete this function if you are not customizing it.
-    fn execution_service(
-        &self,
-        service: BoxService<ExecutionRequest, ExecutionResponse, BoxError>,
-    ) -> BoxService<ExecutionRequest, ExecutionResponse, BoxError> {
+    fn execution_service(&self, service: execution::BoxService) -> execution::BoxService {
         ServiceBuilder::new()
             .service(service)
             .map_response(|execution_response| {
@@ -122,15 +109,15 @@ impl Plugin for ResponseStreamContextPropagation {
     fn subgraph_service(
         &self,
         service_name: &str,
-        service: BoxService<SubgraphRequest, SubgraphResponse, BoxError>,
-    ) -> BoxService<SubgraphRequest, SubgraphResponse, BoxError> {
+        service: subgraph::BoxService,
+    ) -> subgraph::BoxService {
         // let's keep the service_name around, so we can use it in the map_future_with_context closure
         let service_name = service_name.to_string();
         ServiceBuilder::new()
             // we're going to use map_future_with_context here so we can start a timer,
             // and insert the elapsed duration in the context once the subgraph call is done
             .map_future_with_context(
-                move |req: &SubgraphRequest| req.context.clone(),
+                move |req: &subgraph::Request| req.context.clone(),
                 move |ctx: Context, fut| {
                     // start a timer
                     let start = Instant::now();
@@ -139,7 +126,7 @@ impl Plugin for ResponseStreamContextPropagation {
                     let service_name = service_name.clone();
                     async move {
                         // run the subgraph request
-                        let result: Result<SubgraphResponse, BoxError> = fut.await;
+                        let result: Result<subgraph::Response, BoxError> = fut.await;
                         // get the duration
                         let duration = start.elapsed();
                         // add this timer to subgraph-response-times.
@@ -195,45 +182,53 @@ register_plugin!(
 
 #[cfg(test)]
 mod tests {
-    use super::{Conf, ResponseStreamContextPropagation};
-    use apollo_router::plugin::test::IntoSchema::Canned;
-    use apollo_router::plugin::{plugins, test::PluginTestHarness, Plugin, PluginInit};
-    use std::sync::Arc;
-    use tower::BoxError;
+    use apollo_router::stages::router;
+    use tower::Service;
 
     #[tokio::test]
     async fn plugin_registered() {
-        plugins()
-            .get("my_example.response_stream_context_propagation")
-            .expect("Plugin not found")
-            .create_instance(
-                &serde_json::json!({"enabled" : true}),
-                Arc::new("".to_string()),
-            )
+        let config = serde_json::json!({
+            "plugins": {
+                "my_example.response_stream_context_propagation": {
+                    "enabled": true ,
+                }
+            }
+        });
+
+        apollo_router::TestHarness::builder()
+            .configuration_json(config)
+            .unwrap()
+            .build()
             .await
             .unwrap();
     }
 
     #[tokio::test]
-    async fn basic_test() -> Result<(), BoxError> {
-        // Define a configuration to use with our plugin
-        let conf = Conf { enabled: true };
+    async fn basic_test() {
+        let config = serde_json::json!({
+            "plugins": {
+                "my_example.response_stream_context_propagation": {
+                    "enabled": true ,
+                }
+            }
+        });
 
-        // Build an instance of our plugin to use in the test harness
-        let plugin =
-            ResponseStreamContextPropagation::new(PluginInit::new(conf, Arc::new("".to_string())))
-                .await
-                .expect("created plugin");
-
-        // Create the test harness. You can add mocks for individual services, or use prebuilt canned services.
-        let mut test_harness = PluginTestHarness::builder()
-            .plugin(plugin)
-            .schema(Canned)
+        let mut test_harness = apollo_router::TestHarness::builder()
+            .configuration_json(config)
+            .unwrap()
             .build()
-            .await?;
+            .await
+            .unwrap();
 
         // Send a request
-        let mut result = test_harness.call_canned().await?;
+        let request = router::Request::canned_builder()
+            .build()
+            .expect("couldn't craft request");
+
+        let mut result = test_harness
+            .call(request)
+            .await
+            .expect("service call failed");
 
         let first_response = result
             .next_response()
@@ -244,6 +239,5 @@ mod tests {
 
         // You could keep calling result.next_response() until it yields None if you're expexting more parts.
         assert!(result.next_response().await.is_none());
-        Ok(())
     }
 }

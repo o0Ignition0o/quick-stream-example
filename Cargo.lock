@@ -97,8 +97,8 @@ dependencies = [
 
 [[package]]
 name = "apollo-router"
-version = "0.15.1"
-source = "git+https://github.com/apollographql/router.git?tag=v0.15.1#ac7607b0b96e0193631015226b2fdc14c7a9515d"
+version = "0.15.0"
+source = "git+https://github.com/apollographql/router.git?branch=simon/test-harness#5b1cf0e9f71f9094722c01f8005210551a8fd06a"
 dependencies = [
  "access-json",
  "anyhow",
@@ -188,8 +188,8 @@ dependencies = [
 
 [[package]]
 name = "apollo-spaceport"
-version = "0.15.1"
-source = "git+https://github.com/apollographql/router.git?tag=v0.15.1#ac7607b0b96e0193631015226b2fdc14c7a9515d"
+version = "0.15.0"
+source = "git+https://github.com/apollographql/router.git?branch=simon/test-harness#5b1cf0e9f71f9094722c01f8005210551a8fd06a"
 dependencies = [
  "bytes",
  "clap",
@@ -210,8 +210,8 @@ dependencies = [
 
 [[package]]
 name = "apollo-uplink"
-version = "0.15.1"
-source = "git+https://github.com/apollographql/router.git?tag=v0.15.1#ac7607b0b96e0193631015226b2fdc14c7a9515d"
+version = "0.15.0"
+source = "git+https://github.com/apollographql/router.git?branch=simon/test-harness#5b1cf0e9f71f9094722c01f8005210551a8fd06a"
 dependencies = [
  "futures",
  "graphql_client",

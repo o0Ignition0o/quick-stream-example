@@ -1,10 +1,9 @@
 use apollo_router::plugin::{Plugin, PluginInit};
 use apollo_router::register_plugin;
-use apollo_router::services::{RouterRequest, RouterResponse, SubgraphRequest, SubgraphResponse};
+use apollo_router::stages::*;
 use http::StatusCode;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use tower::util::BoxService;
 use tower::{BoxError, ServiceBuilder, ServiceExt};
 
 #[derive(Debug)]
@@ -28,10 +27,7 @@ impl Plugin for ChangeStatusCode {
         })
     }
 
-    fn router_service(
-        &self,
-        service: BoxService<RouterRequest, RouterResponse, BoxError>,
-    ) -> BoxService<RouterRequest, RouterResponse, BoxError> {
+    fn router_service(&self, service: router::BoxService) -> router::BoxService {
         ServiceBuilder::new()
             .service(service)
             .map_response(|mut router_response| {
@@ -51,13 +47,13 @@ impl Plugin for ChangeStatusCode {
     fn subgraph_service(
         &self,
         _service_name: &str,
-        service: BoxService<SubgraphRequest, SubgraphResponse, BoxError>,
-    ) -> BoxService<SubgraphRequest, SubgraphResponse, BoxError> {
+        service: subgraph::BoxService,
+    ) -> subgraph::BoxService {
         ServiceBuilder::new()
             .service(service)
             // we're going to use map_future_with_context here so we can start a timer,
             // and insert the elapsed duration in the context once the subgraph call is done
-            .map_response(|res: SubgraphResponse| {
+            .map_response(|res: subgraph::Response| {
                 // we have a subgraphresponse here, we could have a look at the status code for example:
 
                 if res.response.status() == 200 {
@@ -80,47 +76,56 @@ register_plugin!("my_example", "change_status_code", ChangeStatusCode);
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use super::{ChangeStatusCode, Conf};
-    use apollo_router::plugin::test::IntoSchema::Canned;
-    use apollo_router::plugin::PluginInit;
-    use apollo_router::plugin::{plugins, test::PluginTestHarness, Plugin};
+    use apollo_router::stages::router;
     use http::StatusCode;
-    use tower::BoxError;
+    use tower::Service;
 
     #[tokio::test]
     async fn plugin_registered() {
-        plugins()
-            .get("my_example.change_status_code")
-            .expect("Plugin not found")
-            .create_instance(
-                &serde_json::json!({"enabled" : true}),
-                Arc::new("".to_string()),
-            )
+        let config = serde_json::json!({
+            "plugins": {
+                "my_example.change_status_code": {
+                    "enabled": true ,
+                }
+            }
+        });
+
+        apollo_router::TestHarness::builder()
+            .configuration_json(config)
+            .unwrap()
+            .build()
             .await
             .unwrap();
     }
 
     #[tokio::test]
-    async fn basic_test() -> Result<(), BoxError> {
+    async fn basic_test() {
         // Define a configuration to use with our plugin
-        let conf = Conf { enabled: true };
+        let config = serde_json::json!({
+            "plugins": {
+                "my_example.change_status_code": {
+                    "enabled": true ,
+                }
+            }
+        });
 
-        // Build an instance of our plugin to use in the test harness
-        let plugin = ChangeStatusCode::new(PluginInit::new(conf, Arc::new("".to_string())))
-            .await
-            .expect("created plugin");
-
-        // Create the test harness. You can add mocks for individual services, or use prebuilt canned services.
-        let mut test_harness = PluginTestHarness::builder()
-            .plugin(plugin)
-            .schema(Canned)
+        // Spin up a test harness with the plugin enabled
+        let mut test_harness = apollo_router::TestHarness::builder()
+            .configuration_json(config)
+            .unwrap()
             .build()
-            .await?;
+            .await
+            .unwrap();
 
         // Send a request
-        let mut result = test_harness.call_canned().await?;
+        let request = router::Request::canned_builder()
+            .build()
+            .expect("couldn't craft request");
+
+        let mut result = test_harness
+            .call(request)
+            .await
+            .expect("service call failed");
 
         assert_eq!(StatusCode::UNAUTHORIZED, result.response.status());
 
@@ -128,6 +133,5 @@ mod tests {
 
         // You could keep calling result.next_response() until it yields None if you're expexting more parts.
         assert!(result.next_response().await.is_none());
-        Ok(())
     }
 }
