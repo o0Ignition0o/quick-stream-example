@@ -1,14 +1,8 @@
 use apollo_router::graphql::Response;
 use apollo_router::layers::ServiceBuilderExt;
 use apollo_router::plugin::{Plugin, PluginInit};
-use apollo_router::{
-    register_plugin,
-    services::{
-        ExecutionRequest, ExecutionResponse, RouterRequest, RouterResponse, SubgraphRequest,
-        SubgraphResponse,
-    },
-    Context,
-};
+use apollo_router::stages::*;
+use apollo_router::{register_plugin, Context};
 use futures::StreamExt;
 use http::header::HeaderName;
 use http::HeaderValue;
@@ -16,7 +10,6 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
-use tower::util::BoxService;
 use tower::{BoxError, ServiceBuilder, ServiceExt};
 
 #[derive(Debug)]
@@ -41,10 +34,7 @@ impl Plugin for ResponseStreamContextPropagation {
     }
 
     // Delete this function if you are not customizing it.
-    fn router_service(
-        &self,
-        service: BoxService<RouterRequest, RouterResponse, BoxError>,
-    ) -> BoxService<RouterRequest, RouterResponse, BoxError> {
+    fn router_service(&self, service: router::BoxService) -> router::BoxService {
         ServiceBuilder::new()
             .service(service)
             .map_response(|mut router_response| {
@@ -99,10 +89,7 @@ impl Plugin for ResponseStreamContextPropagation {
     }
 
     // Delete this function if you are not customizing it.
-    fn execution_service(
-        &self,
-        service: BoxService<ExecutionRequest, ExecutionResponse, BoxError>,
-    ) -> BoxService<ExecutionRequest, ExecutionResponse, BoxError> {
+    fn execution_service(&self, service: execution::BoxService) -> execution::BoxService {
         ServiceBuilder::new()
             .service(service)
             .map_response(|execution_response| {
@@ -122,15 +109,15 @@ impl Plugin for ResponseStreamContextPropagation {
     fn subgraph_service(
         &self,
         service_name: &str,
-        service: BoxService<SubgraphRequest, SubgraphResponse, BoxError>,
-    ) -> BoxService<SubgraphRequest, SubgraphResponse, BoxError> {
+        service: subgraph::BoxService,
+    ) -> subgraph::BoxService {
         // let's keep the service_name around, so we can use it in the map_future_with_context closure
         let service_name = service_name.to_string();
         ServiceBuilder::new()
             // we're going to use map_future_with_context here so we can start a timer,
             // and insert the elapsed duration in the context once the subgraph call is done
             .map_future_with_context(
-                move |req: &SubgraphRequest| req.context.clone(),
+                move |req: &subgraph::Request| req.context.clone(),
                 move |ctx: Context, fut| {
                     // start a timer
                     let start = Instant::now();
@@ -139,7 +126,7 @@ impl Plugin for ResponseStreamContextPropagation {
                     let service_name = service_name.clone();
                     async move {
                         // run the subgraph request
-                        let result: Result<SubgraphResponse, BoxError> = fut.await;
+                        let result: Result<subgraph::Response, BoxError> = fut.await;
                         // get the duration
                         let duration = start.elapsed();
                         // add this timer to subgraph-response-times.

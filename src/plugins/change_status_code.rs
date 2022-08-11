@@ -1,10 +1,9 @@
 use apollo_router::plugin::{Plugin, PluginInit};
 use apollo_router::register_plugin;
-use apollo_router::services::{RouterRequest, RouterResponse, SubgraphRequest, SubgraphResponse};
+use apollo_router::stages::*;
 use http::StatusCode;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use tower::util::BoxService;
 use tower::{BoxError, ServiceBuilder, ServiceExt};
 
 #[derive(Debug)]
@@ -28,10 +27,7 @@ impl Plugin for ChangeStatusCode {
         })
     }
 
-    fn router_service(
-        &self,
-        service: BoxService<RouterRequest, RouterResponse, BoxError>,
-    ) -> BoxService<RouterRequest, RouterResponse, BoxError> {
+    fn router_service(&self, service: router::BoxService) -> router::BoxService {
         ServiceBuilder::new()
             .service(service)
             .map_response(|mut router_response| {
@@ -51,13 +47,13 @@ impl Plugin for ChangeStatusCode {
     fn subgraph_service(
         &self,
         _service_name: &str,
-        service: BoxService<SubgraphRequest, SubgraphResponse, BoxError>,
-    ) -> BoxService<SubgraphRequest, SubgraphResponse, BoxError> {
+        service: subgraph::BoxService,
+    ) -> subgraph::BoxService {
         ServiceBuilder::new()
             .service(service)
             // we're going to use map_future_with_context here so we can start a timer,
             // and insert the elapsed duration in the context once the subgraph call is done
-            .map_response(|res: SubgraphResponse| {
+            .map_response(|res: subgraph::Response| {
                 // we have a subgraphresponse here, we could have a look at the status code for example:
 
                 if res.response.status() == 200 {

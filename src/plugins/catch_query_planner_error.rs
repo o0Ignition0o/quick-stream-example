@@ -1,9 +1,7 @@
-use apollo_router::error::{CacheResolverError, QueryPlannerError, SpecError};
+use apollo_router::error::SpecError;
 use apollo_router::layers::ServiceExt;
 use apollo_router::plugin::{Plugin, PluginInit};
-use apollo_router::services::{
-    QueryPlannerRequest, QueryPlannerResponse, RouterRequest, RouterResponse,
-};
+use apollo_router::stages::*;
 use apollo_router::{register_plugin, Context};
 use http::StatusCode;
 use schemars::JsonSchema;
@@ -32,10 +30,7 @@ impl Plugin for CatchQueryPlannerError {
         })
     }
 
-    fn router_service(
-        &self,
-        service: BoxService<RouterRequest, RouterResponse, BoxError>,
-    ) -> BoxService<RouterRequest, RouterResponse, BoxError> {
+    fn router_service(&self, service: router::BoxService) -> router::BoxService {
         ServiceBuilder::new()
             .service(service)
             .map_response(|mut router_response| {
@@ -56,15 +51,15 @@ impl Plugin for CatchQueryPlannerError {
     /// Define `query_planning_service` if your customization needs to interact with query planning functionality (for example, to log query plan details).
     fn query_planning_service(
         &self,
-        service: BoxService<QueryPlannerRequest, QueryPlannerResponse, BoxError>,
-    ) -> BoxService<QueryPlannerRequest, QueryPlannerResponse, BoxError> {
+        service: query_planner::BoxService,
+    ) -> query_planner::BoxService {
         ServiceBuilder::new()
             .service(service)
             .map_future_with_context(
-                move |req: &QueryPlannerRequest| req.context.clone(),
+                move |req: &query_planner::Request| req.context.clone(),
                 |ctx: Context, query_planner_future| async move {
                     // let's run the query planner
-                    let query_planner_response: Result<QueryPlannerResponse, BoxError> =
+                    let query_planner_response: Result<query_planner::Response, BoxError> =
                         query_planner_future.await;
 
                     match &query_planner_response {
