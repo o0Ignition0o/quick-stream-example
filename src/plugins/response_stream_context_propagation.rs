@@ -182,45 +182,53 @@ register_plugin!(
 
 #[cfg(test)]
 mod tests {
-    use super::{Conf, ResponseStreamContextPropagation};
-    use apollo_router::plugin::test::IntoSchema::Canned;
-    use apollo_router::plugin::{plugins, test::PluginTestHarness, Plugin, PluginInit};
-    use std::sync::Arc;
-    use tower::BoxError;
+    use apollo_router::stages::router;
+    use tower::Service;
 
     #[tokio::test]
     async fn plugin_registered() {
-        plugins()
-            .get("my_example.response_stream_context_propagation")
-            .expect("Plugin not found")
-            .create_instance(
-                &serde_json::json!({"enabled" : true}),
-                Arc::new("".to_string()),
-            )
+        let config = serde_json::json!({
+            "plugins": {
+                "my_example.response_stream_context_propagation": {
+                    "enabled": true ,
+                }
+            }
+        });
+
+        apollo_router::TestHarness::builder()
+            .configuration_json(config)
+            .unwrap()
+            .build()
             .await
             .unwrap();
     }
 
     #[tokio::test]
-    async fn basic_test() -> Result<(), BoxError> {
-        // Define a configuration to use with our plugin
-        let conf = Conf { enabled: true };
+    async fn basic_test() {
+        let config = serde_json::json!({
+            "plugins": {
+                "my_example.response_stream_context_propagation": {
+                    "enabled": true ,
+                }
+            }
+        });
 
-        // Build an instance of our plugin to use in the test harness
-        let plugin =
-            ResponseStreamContextPropagation::new(PluginInit::new(conf, Arc::new("".to_string())))
-                .await
-                .expect("created plugin");
-
-        // Create the test harness. You can add mocks for individual services, or use prebuilt canned services.
-        let mut test_harness = PluginTestHarness::builder()
-            .plugin(plugin)
-            .schema(Canned)
+        let mut test_harness = apollo_router::TestHarness::builder()
+            .configuration_json(config)
+            .unwrap()
             .build()
-            .await?;
+            .await
+            .unwrap();
 
         // Send a request
-        let mut result = test_harness.call_canned().await?;
+        let request = router::Request::fake_builder()
+            .build()
+            .expect("couldn't craft request");
+
+        let mut result = test_harness
+            .call(request)
+            .await
+            .expect("service call failed");
 
         let first_response = result
             .next_response()
@@ -231,6 +239,5 @@ mod tests {
 
         // You could keep calling result.next_response() until it yields None if you're expexting more parts.
         assert!(result.next_response().await.is_none());
-        Ok(())
     }
 }

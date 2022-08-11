@@ -76,47 +76,56 @@ register_plugin!("my_example", "change_status_code", ChangeStatusCode);
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use super::{ChangeStatusCode, Conf};
-    use apollo_router::plugin::test::IntoSchema::Canned;
-    use apollo_router::plugin::PluginInit;
-    use apollo_router::plugin::{plugins, test::PluginTestHarness, Plugin};
+    use apollo_router::stages::router;
     use http::StatusCode;
-    use tower::BoxError;
+    use tower::Service;
 
     #[tokio::test]
     async fn plugin_registered() {
-        plugins()
-            .get("my_example.change_status_code")
-            .expect("Plugin not found")
-            .create_instance(
-                &serde_json::json!({"enabled" : true}),
-                Arc::new("".to_string()),
-            )
+        let config = serde_json::json!({
+            "plugins": {
+                "my_example.change_status_code": {
+                    "enabled": true ,
+                }
+            }
+        });
+
+        apollo_router::TestHarness::builder()
+            .configuration_json(config)
+            .unwrap()
+            .build()
             .await
             .unwrap();
     }
 
     #[tokio::test]
-    async fn basic_test() -> Result<(), BoxError> {
+    async fn basic_test() {
         // Define a configuration to use with our plugin
-        let conf = Conf { enabled: true };
+        let config = serde_json::json!({
+            "plugins": {
+                "my_example.change_status_code": {
+                    "enabled": true ,
+                }
+            }
+        });
 
-        // Build an instance of our plugin to use in the test harness
-        let plugin = ChangeStatusCode::new(PluginInit::new(conf, Arc::new("".to_string())))
-            .await
-            .expect("created plugin");
-
-        // Create the test harness. You can add mocks for individual services, or use prebuilt canned services.
-        let mut test_harness = PluginTestHarness::builder()
-            .plugin(plugin)
-            .schema(Canned)
+        // Spin up a test harness with the plugin enabled
+        let mut test_harness = apollo_router::TestHarness::builder()
+            .configuration_json(config)
+            .unwrap()
             .build()
-            .await?;
+            .await
+            .unwrap();
 
         // Send a request
-        let mut result = test_harness.call_canned().await?;
+        let request = router::Request::fake_builder()
+            .build()
+            .expect("couldn't craft request");
+
+        let mut result = test_harness
+            .call(request)
+            .await
+            .expect("service call failed");
 
         assert_eq!(StatusCode::UNAUTHORIZED, result.response.status());
 
@@ -124,6 +133,5 @@ mod tests {
 
         // You could keep calling result.next_response() until it yields None if you're expexting more parts.
         assert!(result.next_response().await.is_none());
-        Ok(())
     }
 }
