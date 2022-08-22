@@ -58,7 +58,7 @@ impl Plugin for CatchInvalidTypeError {
                         tracing::info!("we have an invalid type error!");
                         parts.status = StatusCode::UNAUTHORIZED;
                     } else {
-                        tracing::info!("we don't an invalid type error!");
+                        tracing::info!("we don't have an invalid type error!");
                     }
                 }
 
@@ -117,6 +117,7 @@ mod tests {
         let mut test_harness = apollo_router::TestHarness::builder()
             .configuration_json(config)
             .unwrap()
+            .schema(include_str!("../../supergraph.graphql"))
             .build()
             .await
             .unwrap();
@@ -129,7 +130,8 @@ mod tests {
         assert_eq!(StatusCode::OK, result.response.status());
 
         let invalid_request = supergraph::Request::fake_builder()
-            .query(r#"{"query":"query TopProducts($first: Int) {\n  topProducts(first: $first) {\n    name\n  }\n}","variables":{"first":"coucou"}}"#)
+            .query("query TopProducts($first: Int) {\n  topProducts(first: $first) {\n    name\n  }\n}")
+            .variable("first", "thisShouldBeAnInteger")
             .build()?;
         let result = test_harness.call(invalid_request).await?;
         assert_eq!(StatusCode::UNAUTHORIZED, result.response.status());
