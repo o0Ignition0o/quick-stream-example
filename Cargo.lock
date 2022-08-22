@@ -97,7 +97,8 @@ dependencies = [
 
 [[package]]
 name = "apollo-router"
-version = "0.15.1"
+version = "0.16.0"
+source = "git+https://github.com/apollographql/router.git?tag=v0.16.0#2badb717d65971c89a8551f8c52b090b62beb9bf"
 dependencies = [
  "access-json",
  "anyhow",
@@ -187,7 +188,8 @@ dependencies = [
 
 [[package]]
 name = "apollo-spaceport"
-version = "0.15.1"
+version = "0.16.0"
+source = "git+https://github.com/apollographql/router.git?tag=v0.16.0#2badb717d65971c89a8551f8c52b090b62beb9bf"
 dependencies = [
  "bytes",
  "clap",
@@ -208,7 +210,8 @@ dependencies = [
 
 [[package]]
 name = "apollo-uplink"
-version = "0.15.1"
+version = "0.16.0"
+source = "git+https://github.com/apollographql/router.git?tag=v0.16.0#2badb717d65971c89a8551f8c52b090b62beb9bf"
 dependencies = [
  "futures",
  "graphql_client",

@@ -2,7 +2,7 @@ use std::pin::Pin;
 
 use apollo_router::plugin::{Plugin, PluginInit};
 use apollo_router::register_plugin;
-use apollo_router::stages;
+use apollo_router::services;
 use futures::StreamExt;
 use http::StatusCode;
 use schemars::JsonSchema;
@@ -33,41 +33,45 @@ impl Plugin for CatchInvalidTypeError {
 
     fn supergraph_service(
         &self,
-        service: stages::supergraph::BoxService,
-    ) -> stages::supergraph::BoxService {
-        ServiceBuilder::new()
-            .service(service)
-            .map_future(|fut| async {
-                let response: stages::supergraph::Response = fut.await?;
+        service: services::supergraph::BoxService,
+    ) -> services::supergraph::BoxService {
+        if self.configuration.enabled {
+            service
+        } else {
+            ServiceBuilder::new()
+                .service(service)
+                .map_future(|fut| async {
+                    let response: services::supergraph::Response = fut.await?;
 
-                let stages::supergraph::Response {
-                    response: response_body,
-                    context,
-                } = response;
-                let (mut parts, body) = response_body.inner.into_parts();
+                    let services::supergraph::Response {
+                        response: response_body,
+                        context,
+                    } = response;
+                    let (mut parts, body) = response_body.inner.into_parts();
 
-                let mut peekable = body.peekable();
+                    let mut peekable = body.peekable();
 
-                let pinned = Pin::new(&mut peekable);
-                if let Some(first_payload) = pinned.peek().await {
-                    let has_invalid_type_error = first_payload.errors.iter().any(|e| {
-                        e.extensions.get("type")
-                            == Some(&Value::String("ValidationInvalidTypeVariable".into()))
-                    });
-                    if has_invalid_type_error {
-                        tracing::info!("we have an invalid type error!");
-                        parts.status = StatusCode::UNAUTHORIZED;
-                    } else {
-                        tracing::info!("we don't have an invalid type error!");
+                    let pinned = Pin::new(&mut peekable);
+                    if let Some(first_payload) = pinned.peek().await {
+                        let has_invalid_type_error = first_payload.errors.iter().any(|e| {
+                            e.extensions.get("type")
+                                == Some(&Value::String("ValidationInvalidTypeVariable".into()))
+                        });
+                        if has_invalid_type_error {
+                            tracing::info!("we have an invalid type error!");
+                            parts.status = StatusCode::UNAUTHORIZED;
+                        } else {
+                            tracing::info!("we don't have an invalid type error!");
+                        }
                     }
-                }
 
-                Ok(stages::supergraph::Response {
-                    response: http::Response::from_parts(parts, peekable.boxed()).into(),
-                    context,
+                    Ok(services::supergraph::Response {
+                        response: http::Response::from_parts(parts, peekable.boxed()).into(),
+                        context,
+                    })
                 })
-            })
-            .boxed()
+                .boxed()
+        }
     }
 }
 
@@ -82,7 +86,7 @@ register_plugin!(
 #[cfg(test)]
 mod tests {
     use ::http::StatusCode;
-    use apollo_router::stages::*;
+    use apollo_router::services::*;
     use tower::{BoxError, Service};
 
     #[tokio::test]
