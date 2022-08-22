@@ -9,13 +9,11 @@
 // --data '{"query":"query Me {\n  me {\n    name\n }\n}","variables":{}}'
 // HTTP 200
 
-// curl -v \
-// --header 'apollographql-client-name: ignition' \
-// --header 'apollographql-client-version: test' \
+// curl -v --request POST \
 // --header 'content-type: application/json' \
-// --url 'http://127.0.0.1:4000/' \
-// --data '{"query":"query Me {\n  me {\n    name\nthisfieldddoesntexist }\n}","variables":{}}'
-// HTTP 400, should be 401
+// --url http://localhost:4000 \
+// --data '{"query":"query TopProducts($first: Int) {\n  topProducts(first: $first) {\n    name\n  }\n}","variables":{"first":"coucou"}}'
+// HTTP 401
 
 mod plugins;
 

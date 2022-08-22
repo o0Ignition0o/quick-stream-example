@@ -1,7 +1,10 @@
+use std::pin::Pin;
+
 use apollo_router::plugin::{Plugin, PluginInit};
 use apollo_router::register_plugin;
 use apollo_router::stages;
 use futures::StreamExt;
+use http::StatusCode;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json_bytes::Value;
@@ -34,23 +37,34 @@ impl Plugin for CatchInvalidTypeError {
     ) -> stages::supergraph::BoxService {
         ServiceBuilder::new()
             .service(service)
-            .map_response(|supergraph_response| {
-                // we will need to wait for the first response to check if there are errors
-                supergraph_response.map(|response| {
-                    Box::pin(response.map(move |body| {
-                        // we have a router_response, let's see if we have an invalidtype error
-                        let has_invalid_type_error = body.errors.iter().any(|e| {
-                            e.extensions.get("type")
-                                == Some(&Value::String("ValidationInvalidTypeVariable".into()))
-                        });
+            .map_future(|fut| async {
+                let response: stages::supergraph::Response = fut.await?;
 
-                        if has_invalid_type_error {
-                            tracing::info!("we have an invalid type error!");
-                        } else {
-                            tracing::info!("we don't an invalid type error!");
-                        }
-                        body
-                    }))
+                let stages::supergraph::Response {
+                    response: response_body,
+                    context,
+                } = response;
+                let (mut parts, body) = response_body.inner.into_parts();
+
+                let mut peekable = body.peekable();
+
+                let pinned = Pin::new(&mut peekable);
+                if let Some(first_payload) = pinned.peek().await {
+                    let has_invalid_type_error = first_payload.errors.iter().any(|e| {
+                        e.extensions.get("type")
+                            == Some(&Value::String("ValidationInvalidTypeVariable".into()))
+                    });
+                    if has_invalid_type_error {
+                        tracing::info!("we have an invalid type error!");
+                        parts.status = StatusCode::UNAUTHORIZED;
+                    } else {
+                        tracing::info!("we don't an invalid type error!");
+                    }
+                }
+
+                Ok(stages::supergraph::Response {
+                    response: http::Response::from_parts(parts, peekable.boxed()).into(),
+                    context,
                 })
             })
             .boxed()
@@ -115,7 +129,7 @@ mod tests {
         assert_eq!(StatusCode::OK, result.response.status());
 
         let invalid_request = supergraph::Request::fake_builder()
-            .query("query Me {\n  me {\n    name\n thisfielddoesntexist\n }\n}")
+            .query(r#"{"query":"query TopProducts($first: Int) {\n  topProducts(first: $first) {\n    name\n  }\n}","variables":{"first":"coucou"}}"#)
             .build()?;
         let result = test_harness.call(invalid_request).await?;
         assert_eq!(StatusCode::UNAUTHORIZED, result.response.status());
