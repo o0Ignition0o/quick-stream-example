@@ -39,7 +39,7 @@ impl Plugin for CatchInvalidTypeError {
             ServiceBuilder::new()
                 .service(service)
                 .map_first_graphql_response(|_, mut parts, response| {
-                    let has_invalid_type_error = dbg!(&response.errors).iter().any(|e| {
+                    let has_invalid_type_error = response.errors.iter().any(|e| {
                         e.extensions.get("type")
                             == Some(&Value::String("ValidationInvalidTypeVariable".into()))
                     });
