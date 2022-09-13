@@ -1,7 +1,3 @@
 plugins:
-  my_example.catch_query_planner_error:
-    enabled: true
-  my_example.change_status_code:
-    enabled: true
-  my_example.response_stream_context_propagation:
+  my_example.catch_invalid_type_error:
     enabled: true
