@@ -110,7 +110,6 @@ dependencies = [
 [[package]]
 name = "apollo-router"
 version = "1.0.0-alpha.3"
-source = "git+https://github.com/apollographql/router.git?branch=main#0e5cd4be435f6d19af9a16179430a9be6e5e6303"
 dependencies = [
  "access-json",
  "anyhow",

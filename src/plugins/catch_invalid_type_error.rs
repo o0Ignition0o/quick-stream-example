@@ -1,10 +1,7 @@
-use std::pin::Pin;
-
 use apollo_router::layers::ServiceExt;
 use apollo_router::plugin::{Plugin, PluginInit};
 use apollo_router::register_plugin;
 use apollo_router::services;
-use futures::StreamExt;
 use http::StatusCode;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -36,38 +33,11 @@ impl Plugin for CatchInvalidTypeError {
         &self,
         service: services::supergraph::BoxService,
     ) -> services::supergraph::BoxService {
-        if self.configuration.enabled {
+        if !self.configuration.enabled {
             service
         } else {
             ServiceBuilder::new()
                 .service(service)
-                .map_future(|fut| async {
-                    let response: services::supergraph::Response = fut.await?;
-                    let services::supergraph::Response {
-                        response: response_body,
-                        context,
-                        ..
-                    } = response;
-                    let (mut parts, body) = response_body.into_parts();
-                    let mut peekable = body.peekable();
-                    let pinned = Pin::new(&mut peekable);
-                    if let Some(first_payload) = pinned.peek().await {
-                        let has_invalid_type_error = first_payload.errors.iter().any(|e| {
-                            e.extensions.get("type")
-                                == Some(&Value::String("ValidationInvalidTypeVariable".into()))
-                        });
-                        if has_invalid_type_error {
-                            tracing::info!("we have an invalid type error!");
-                            parts.status = StatusCode::UNAUTHORIZED;
-                        } else {
-                            tracing::info!("we don't have an invalid type error!");
-                        }
-                    }
-                    Ok(services::supergraph::Response {
-                        response: http::Response::from_parts(parts, peekable.boxed()).into(),
-                        context,
-                    })
-                })
                 .map_first_graphql_response(|_, mut parts, response| {
                     let has_invalid_type_error = dbg!(&response.errors).iter().any(|e| {
                         e.extensions.get("type")
